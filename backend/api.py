@@ -15,6 +15,7 @@ from backend.trading_engine import TradingEngine
 from backend.backtest_engine import BacktestEngine
 from backend.websocket_manager import WebSocketManager
 from backend.data_downloader import DataDownloader
+from backend.notification_manager import NotificationManager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -23,6 +24,7 @@ router = APIRouter()
 trading_engine: Optional[TradingEngine] = None
 backtest_engine: Optional[BacktestEngine] = None
 data_downloader: Optional[DataDownloader] = None
+notification_manager: Optional[NotificationManager] = None
 
 def set_trading_engine(engine: TradingEngine):
     """Set global trading engine instance"""
@@ -38,6 +40,12 @@ def set_data_downloader(downloader: DataDownloader):
     """Set global data downloader instance"""
     global data_downloader
     data_downloader = downloader
+
+
+def set_notification_manager(manager: NotificationManager):
+    """Set notification manager"""
+    global notification_manager
+    notification_manager = manager
 
 class SettingsUpdate(BaseModel):
     """Settings update model"""
@@ -182,7 +190,8 @@ async def run_backtest(request: BacktestRequest, background_tasks: BackgroundTas
             initial_balance=request.initial_balance,
             strategy_params=request.strategy_params,
             risk_params=request.risk_params,
-            ws_manager=ws_manager
+            ws_manager=ws_manager,
+            notification_manager=notification_manager
         )
         set_backtest_engine(backtest_engine)
         

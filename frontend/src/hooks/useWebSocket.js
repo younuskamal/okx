@@ -7,6 +7,7 @@ export function useWebSocket() {
   const [positions, setPositions] = useState([]);
   const [trades, setTrades] = useState([]);
   const [backtestUpdate, setBacktestUpdate] = useState(null);
+  const [notifications, setNotifications] = useState([]);
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
 
@@ -57,6 +58,20 @@ export function useWebSocket() {
           case 'backtest_update':
             setBacktestUpdate(message.data);
             break;
+          case 'notification':
+            setNotifications(prev => [message.data, ...prev].slice(0, 50));
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+              try {
+                new Notification(message.data.title || 'System notification', {
+                  body: message.data.message,
+                  tag: message.data.timestamp,
+                  data: message.data
+                });
+              } catch (err) {
+                console.warn('Browser notification failed', err);
+              }
+            }
+            break;
           default:
             console.log('Unknown message type:', message.type);
         }
@@ -99,7 +114,8 @@ export function useWebSocket() {
     metrics,
     positions,
     trades,
-    backtestUpdate
+    backtestUpdate,
+    notifications
   };
 }
 

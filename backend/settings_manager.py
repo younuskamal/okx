@@ -20,9 +20,12 @@ class SettingsManager:
     def _load_settings(self):
         """Load settings from database or use defaults"""
         settings = get_settings()
+        defaults = self.config_manager.get_default_settings()
         if not settings:
-            settings = self.config_manager.get_default_settings()
+            settings = defaults
             save_settings(settings)
+        else:
+            settings = self._merge_defaults(defaults, settings)
         self._settings_cache = settings
     
     def get_all_settings(self) -> Dict[str, Any]:
@@ -76,6 +79,8 @@ class SettingsManager:
             self._validate_api_keys(updates)
         elif category == "backtest":
             self._validate_backtest(updates)
+        elif category == "notifications":
+            self._validate_notifications(updates)
     
     def _validate_strategy(self, updates: Dict[str, Any]):
         """Validate strategy settings"""
@@ -149,6 +154,42 @@ class SettingsManager:
             val = updates["initial_balance"]
             if not isinstance(val, (int, float)) or val < 100:
                 raise ValueError("initial_balance must be >= 100")
+
+    def _validate_notifications(self, updates: Dict[str, Any]):
+        """Validate notification settings"""
+        if "enabled" in updates and not isinstance(updates["enabled"], bool):
+            raise ValueError("notifications.enabled must be a boolean")
+
+        channels = updates.get("channels", {})
+        if not isinstance(channels, dict):
+            raise ValueError("notifications.channels must be an object")
+
+        email = channels.get("email", {})
+        if email:
+            if "smtp_port" in email:
+                port = email["smtp_port"]
+                if not isinstance(port, int) or port <= 0:
+                    raise ValueError("SMTP port must be a positive integer")
+
+        events = updates.get("events")
+        if events is not None and not isinstance(events, dict):
+            raise ValueError("notifications.events must be an object")
+
+    def _merge_defaults(self, defaults: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge stored settings with defaults so new keys are available"""
+        merged = {}
+        for key, value in defaults.items():
+            if key not in overrides:
+                merged[key] = value
+            elif isinstance(value, dict) and isinstance(overrides[key], dict):
+                merged[key] = self._merge_defaults(value, overrides[key])
+            else:
+                merged[key] = overrides[key]
+
+        for key, value in overrides.items():
+            if key not in merged:
+                merged[key] = value
+        return merged
     
     def get_default_settings(self) -> Dict[str, Any]:
         """Get default settings structure"""
