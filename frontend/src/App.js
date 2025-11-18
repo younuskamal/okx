@@ -43,6 +43,12 @@ function App() {
     setCurrentTab(newValue);
   };
 
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
   // Update tab based on route
   React.useEffect(() => {
     const path = window.location.pathname;

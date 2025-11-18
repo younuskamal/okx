@@ -15,6 +15,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared.strategy import EngulfingStrategy
 from backend.websocket_manager import WebSocketManager
+from backend.notification_manager import NotificationManager
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,8 @@ class BacktestEngine:
     def __init__(self, initial_balance: float = 10000.0,
                  strategy_params: Dict = None,
                  risk_params: Dict = None,
-                 ws_manager: Optional[WebSocketManager] = None):
+                 ws_manager: Optional[WebSocketManager] = None,
+                 notification_manager: Optional[NotificationManager] = None):
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.equity_curve = []
@@ -35,6 +37,7 @@ class BacktestEngine:
         self.ws_manager = ws_manager
         self.running = False
         self.results: Optional[Dict] = None
+        self.notification_manager = notification_manager
         
         # Risk parameters
         self.structural_sl_buffer_pips = self.risk_params.get('structural_sl_buffer_pips', 5)
@@ -373,7 +376,14 @@ class BacktestEngine:
                     "message": "Backtest completed",
                     "results": self.results
                 })
-            
+            await self._notify(
+                'backtest_completed',
+                'Backtest finished',
+                f"ROI: {self.results.get('roi', 0):.2f}%",
+                severity='success',
+                metadata=self.results
+            )
+
         except Exception as e:
             logger.error(f"Error in backtest: {e}")
             if self.ws_manager:
@@ -381,6 +391,7 @@ class BacktestEngine:
                     "status": "error",
                     "message": str(e)
                 })
+            await self._notify('error', 'Backtest failed', str(e), severity='error')
         finally:
             self.running = False
     
@@ -452,4 +463,12 @@ class BacktestEngine:
         if not self.results:
             raise Exception("No results available. Run backtest first.")
         return self.results
+
+    async def _notify(self, event_type: str, title: str, message: str, severity: str = 'info', metadata: Optional[Dict] = None):
+        if not self.notification_manager:
+            return
+        try:
+            await self.notification_manager.send_notification(event_type, title, message, severity, metadata)
+        except Exception as exc:
+            logger.debug(f"Notification skip: {exc}")
 

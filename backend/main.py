@@ -15,6 +15,7 @@ from backend.trading_engine import TradingEngine
 from backend.backtest_engine import BacktestEngine
 from backend.data_downloader import DataDownloader
 from backend.settings_manager import SettingsManager
+from backend.notification_manager import NotificationManager
 from backend.database import init_db
 
 logging.basicConfig(
@@ -29,27 +30,37 @@ trading_engine: Optional[TradingEngine] = None
 backtest_engine: Optional[BacktestEngine] = None
 data_downloader: Optional[DataDownloader] = None
 settings_manager: Optional[SettingsManager] = None
+notification_manager: Optional[NotificationManager] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     # Startup
-    global trading_engine, backtest_engine, data_downloader, settings_manager
+    global trading_engine, backtest_engine, data_downloader, settings_manager, notification_manager
     logger.info("Initializing database...")
     init_db()
     
     logger.info("Initializing settings manager...")
     settings_manager = SettingsManager()
     settings = settings_manager.get_all_settings()
-    
+
+    notification_manager = NotificationManager(ws_manager=ws_manager)
+    notification_manager.update_from_settings(settings.get('notifications', {}))
+
     logger.info("Initializing trading engine...")
-    trading_engine = TradingEngine(settings, ws_manager)
-    
+    trading_engine = TradingEngine(settings, ws_manager, notification_manager=notification_manager)
+
     logger.info("Initializing data downloader...")
     data_downloader = DataDownloader(ws_manager=ws_manager)
-    
+
     logger.info("Initializing API globals...")
-    initialize_api_globals(trading_engine, backtest_engine, data_downloader, settings_manager)
+    initialize_api_globals(
+        trading_engine,
+        backtest_engine,
+        data_downloader,
+        settings_manager,
+        notification_manager
+    )
     
     logger.info("Backend started successfully")
     

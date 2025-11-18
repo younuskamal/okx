@@ -1,31 +1,49 @@
 @echo off
-echo Starting OKX Trading System Backend...
-echo.
+setlocal ENABLEDELAYEDEXPANSION
 
 cd /d %~dp0
 
-echo Checking Python...
-python --version
+echo ========================================
+echo   OKX Trading System Launcher
+echo ========================================
+echo.
+
+REM Validate Python
+python --version >nul 2>&1
 if errorlevel 1 (
-    echo ERROR: Python not found!
+    echo ERROR: Python is not installed or not in PATH.
     pause
     exit /b 1
 )
 
+REM Validate Node.js
+node --version >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: Node.js is not installed or not in PATH.
+    pause
+    exit /b 1
+)
+
+echo Starting backend and frontend services...
+echo A console window will open for each service.
 echo.
-echo Installing/Updating dependencies...
-python -m pip install -r backend/requirements.txt --quiet
+
+start "OKX Backend" cmd /k "cd /d %~dp0 && scripts\start_backend.bat"
+timeout /t 5 /nobreak >nul
+start "OKX Frontend" cmd /k "cd /d %~dp0 && scripts\start_frontend.bat"
 
 echo.
-echo Starting backend server...
-echo Backend will be available at: http://localhost:8000
-echo API Documentation: http://localhost:8000/docs
-echo.
-echo Press Ctrl+C to stop the server
-echo.
+echo Waiting for services to initialize...
+timeout /t 8 /nobreak >nul
 
-python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+echo Launching dashboard in your default browser.
+start "" "http://localhost:3000"
 
+echo.
+echo ========================================
+echo   All services launched successfully!
+echo   Backend:  http://localhost:8000
+echo   Frontend: http://localhost:3000
+echo ========================================
+echo.
 pause
-
-

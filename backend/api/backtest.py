@@ -9,6 +9,7 @@ import logging
 from backend.backtest_engine import BacktestEngine
 from backend.trading_engine import TradingEngine
 from backend.settings_manager import SettingsManager
+from backend.notification_manager import NotificationManager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -16,6 +17,7 @@ router = APIRouter()
 # Global backtest engine instance
 backtest_engine: Optional[BacktestEngine] = None
 trading_engine: Optional[TradingEngine] = None
+notification_manager: Optional[NotificationManager] = None
 
 def set_backtest_engine(engine: BacktestEngine):
     """Set global backtest engine instance"""
@@ -26,6 +28,12 @@ def set_trading_engine(engine: TradingEngine):
     """Set trading engine for WebSocket access"""
     global trading_engine
     trading_engine = engine
+
+
+def set_notification_manager(manager: NotificationManager):
+    """Attach notification manager for backtest events"""
+    global notification_manager
+    notification_manager = manager
 
 class BacktestRequest(BaseModel):
     """Backtest request model"""
@@ -61,7 +69,8 @@ async def run_backtest(request: BacktestRequest, background_tasks: BackgroundTas
             initial_balance=request.initial_balance,
             strategy_params=strategy_params,
             risk_params=risk_params,
-            ws_manager=ws_manager
+            ws_manager=ws_manager,
+            notification_manager=notification_manager
         )
         set_backtest_engine(backtest_engine)
         

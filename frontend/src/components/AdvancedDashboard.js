@@ -32,9 +32,10 @@ import MetricsPanel from './MetricsPanel';
 import PositionsPanel from './PositionsPanel';
 import LogsPanel from './LogsPanel';
 import SystemHealth from './SystemHealth';
+import NotificationsPanel from './NotificationsPanel';
 
 function AdvancedDashboard() {
-  const { connected, metrics, positions, logs } = useWebSocket();
+  const { connected, metrics, positions, logs, notifications } = useWebSocket();
   const { tradingActive, setTradingActive } = useStore();
   const [tradingStatus, setTradingStatus] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -172,13 +173,15 @@ function AdvancedDashboard() {
           <PositionsPanel positions={positions} />
 
           {/* Live Logs */}
-          <Paper sx={{ p: 2, bgcolor: 'background.paper', height: 300, overflow: 'auto' }}>
+          <Paper sx={{ p: 2, bgcolor: 'background.paper', height: 300, overflow: 'auto', mb: 3 }}>
             <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
               Live Logs
             </Typography>
             <Divider sx={{ mb: 2 }} />
             <LogsPanel logs={logs} />
           </Paper>
+
+          <NotificationsPanel notifications={notifications} />
         </Grid>
       </Grid>
     </Box>
