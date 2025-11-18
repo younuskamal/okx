@@ -15,6 +15,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared.strategy import EngulfingStrategy
 from backend.websocket_manager import WebSocketManager
+from backend.notification_manager import NotificationManager
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,9 @@ class BacktestEngine:
     def __init__(self, initial_balance: float = 10000.0,
                  strategy_params: Dict = None,
                  risk_params: Dict = None,
-                 ws_manager: Optional[WebSocketManager] = None):
+                 ws_manager: Optional[WebSocketManager] = None,
+                 notification_manager: Optional[NotificationManager] = None,
+                 monte_carlo_iterations: int = 250):
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.equity_curve = []
@@ -35,12 +38,22 @@ class BacktestEngine:
         self.ws_manager = ws_manager
         self.running = False
         self.results: Optional[Dict] = None
+        self.notification_manager = notification_manager
+        self.forward_results: Optional[Dict] = None
+        self.monte_carlo_iterations = monte_carlo_iterations
         
         # Risk parameters
         self.structural_sl_buffer_pips = self.risk_params.get('structural_sl_buffer_pips', 5)
         self.min_profit_pips = self.risk_params.get('min_profit_pips', 0)
         self.min_profit_money = self.risk_params.get('min_profit_money', 0)
         self.close_at_first_profit = self.risk_params.get('close_at_first_profit', True)
+
+    def _reset_state(self):
+        """Reset balances and trade history before executing a segment."""
+        self.balance = self.initial_balance
+        self.equity_curve = []
+        self.trades = []
+        self.current_position = None
     
     def calculate_stop_loss(self, signal_type: str, engulfing_candle: List[float]) -> float:
         """Calculate structural stop loss"""
@@ -270,7 +283,8 @@ class BacktestEngine:
         return all_candles
     
     async def run(self, symbol: str, timeframe: str, start_date: str, end_date: str,
-                 trading_config: Dict = None, position_size_percent: float = 10.0):
+                 trading_config: Dict = None, position_size_percent: float = 10.0,
+                 forward_split: float = 0.2):
         """Run backtest"""
         self.running = True
         trading_config = trading_config or {}
@@ -304,76 +318,44 @@ class BacktestEngine:
                     "message": f"Running backtest on {len(candles)} candles..."
                 })
             
-            # Run backtest
-            for i in range(1, len(candles)):
-                if not self.running:
-                    break
-                
-                current_candle = candles[i]
-                previous_candle = candles[i-1]
-                timestamp = current_candle[0]
-                current_price = current_candle[4]
-                
-                # Update current position
-                if self.current_position:
-                    self.update_position(current_price, timestamp, i)
-                
-                # Check for new signals only if no position
-                if self.current_position is None:
-                    # Check trading window
-                    if self.is_trading_window_open(timestamp, trading_config):
-                        # Check bullish engulfing
-                        if self.strategy.check_bullish_engulfing(current_candle, previous_candle):
-                            self.open_position('buy', current_candle, timestamp, i, position_size_percent)
-                        
-                        # Check bearish engulfing
-                        elif self.strategy.check_bearish_engulfing(current_candle, previous_candle):
-                            self.open_position('sell', current_candle, timestamp, i, position_size_percent)
-                
-                # Record equity
-                equity = self.balance
-                if self.current_position:
-                    pos = self.current_position
-                    entry_price = pos['entry_price']
-                    quantity = pos['quantity']
-                    side = pos['side']
-                    
-                    if side == 'buy':
-                        unrealized_pnl = (current_price - entry_price) * quantity
-                    else:  # sell
-                        unrealized_pnl = (entry_price - current_price) * quantity
-                    
-                    equity += unrealized_pnl
-                
-                self.equity_curve.append({
-                    'timestamp': timestamp,
-                    'equity': equity,
-                    'price': current_price
-                })
-                
-                # Progress update
-                if i % 1000 == 0 and self.ws_manager:
-                    await self.ws_manager.send_backtest_update({
-                        "status": "running",
-                        "progress": (i / len(candles)) * 100,
-                        "candles_processed": i
-                    })
-            
-            # Close any open position at the end
-            if self.current_position:
-                last_candle = candles[-1]
-                self.close_position(last_candle[4], last_candle[0], len(candles)-1, 'end_of_data')
-            
-            # Generate results
-            self.results = self.generate_report()
-            
+            forward_ratio = max(0.0, min(0.9, forward_split or 0))
+            split_index = int(len(candles) * (1 - forward_ratio)) if forward_ratio else len(candles)
+            training_candles = candles[:split_index]
+            forward_candles = candles[split_index:] if forward_ratio else []
+
+            training_report = await self._execute_segment(
+                training_candles,
+                trading_config,
+                position_size_percent,
+                segment_name='training'
+            )
+
+            forward_report = None
+            if forward_candles:
+                forward_report = await self._execute_segment(
+                    forward_candles,
+                    trading_config,
+                    position_size_percent,
+                    segment_name='forward'
+                )
+
+            self.results = self._build_results(training_report, forward_report, forward_ratio)
+            self.forward_results = self.results.get('forward')
+
             if self.ws_manager:
                 await self.ws_manager.send_backtest_update({
                     "status": "completed",
                     "message": "Backtest completed",
                     "results": self.results
                 })
-            
+            await self._notify(
+                'backtest_completed',
+                'Backtest finished',
+                f"ROI: {self.results.get('roi', 0):.2f}%",
+                severity='success',
+                metadata=self.results
+            )
+
         except Exception as e:
             logger.error(f"Error in backtest: {e}")
             if self.ws_manager:
@@ -381,49 +363,140 @@ class BacktestEngine:
                     "status": "error",
                     "message": str(e)
                 })
+            await self._notify('error', 'Backtest failed', str(e), severity='error')
         finally:
             self.running = False
-    
-    def generate_report(self) -> Dict:
-        """Generate backtest report"""
+
+    async def _execute_segment(self, candles: List[List[float]], trading_config: Dict,
+                               position_size_percent: float, segment_name: str) -> Dict:
+        """Execute a single segment (training or forward)."""
+        self._reset_state()
+        total = len(candles)
+        for i in range(1, total):
+            if not self.running:
+                break
+
+            current_candle = candles[i]
+            previous_candle = candles[i-1]
+            timestamp = current_candle[0]
+            current_price = current_candle[4]
+
+            if self.current_position:
+                self.update_position(current_price, timestamp, i)
+
+            if self.current_position is None and self.is_trading_window_open(timestamp, trading_config):
+                if self.strategy.check_bullish_engulfing(current_candle, previous_candle):
+                    self.open_position('buy', current_candle, timestamp, i, position_size_percent)
+                elif self.strategy.check_bearish_engulfing(current_candle, previous_candle):
+                    self.open_position('sell', current_candle, timestamp, i, position_size_percent)
+
+            equity = self.balance
+            if self.current_position:
+                pos = self.current_position
+                entry_price = pos['entry_price']
+                quantity = pos['quantity']
+                side = pos['side']
+                if side == 'buy':
+                    unrealized_pnl = (current_price - entry_price) * quantity
+                else:
+                    unrealized_pnl = (entry_price - current_price) * quantity
+                equity += unrealized_pnl
+
+            self.equity_curve.append({
+                'timestamp': timestamp,
+                'equity': equity,
+                'price': current_price,
+                'segment': segment_name
+            })
+
+            if i % 1000 == 0 and self.ws_manager:
+                await self.ws_manager.send_backtest_update({
+                    "status": "running",
+                    "progress": (i / total) * 100,
+                    "candles_processed": i,
+                    "segment": segment_name
+                })
+
+        if self.current_position:
+            last_candle = candles[-1]
+            self.close_position(last_candle[4], last_candle[0], len(candles)-1, 'end_of_data')
+
+        return self.generate_report(segment_name=segment_name)
+
+    async def run_on_candles(self, candles: List[List[float]], trading_config: Dict,
+                              position_size_percent: float, segment_name: str = 'optimization') -> Dict:
+        """Utility used by the optimizer to reuse cached candles."""
+        return await self._execute_segment(candles, trading_config, position_size_percent, segment_name)
+
+    def _build_results(self, training_report: Dict, forward_report: Optional[Dict], forward_ratio: float) -> Dict:
+        comparison = None
+        if forward_report:
+            comparison = {
+                'roi_delta': forward_report.get('roi', 0) - training_report.get('roi', 0),
+                'win_rate_delta': forward_report.get('win_rate', 0) - training_report.get('win_rate', 0),
+                'profit_delta': forward_report.get('total_profit', 0) - training_report.get('total_profit', 0),
+            }
+
+        combined = dict(training_report)
+        combined.update({
+            'summary': training_report,
+            'forward': forward_report,
+            'comparison': comparison,
+            'forward_split': forward_ratio,
+        })
+        return combined
+
+    def generate_report(self, segment_name: str = 'training') -> Dict:
+        """Generate enriched backtest report"""
         if not self.trades:
             return {
+                'segment': segment_name,
                 'total_trades': 0,
                 'win_rate': 0,
                 'total_profit': 0,
                 'max_drawdown': 0,
                 'final_balance': self.balance,
                 'roi': 0,
-                'profit_factor': 0
+                'profit_factor': 0,
+                'trades': [],
+                'equity_curve': self.equity_curve,
+                'trade_explorer': {},
+                'monte_carlo': {}
             }
-        
+
         df_trades = pd.DataFrame(self.trades)
         df_equity = pd.DataFrame(self.equity_curve)
-        
-        # Calculate metrics
+        df_trades['entry_dt'] = pd.to_datetime(df_trades['entry_time'], unit='ms')
+
         total_trades = len(df_trades)
         winning_trades = len(df_trades[df_trades['pnl'] > 0])
         losing_trades = len(df_trades[df_trades['pnl'] < 0])
         win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
-        
-        total_profit = df_trades['pnl'].sum()
-        avg_win = df_trades[df_trades['pnl'] > 0]['pnl'].mean() if winning_trades > 0 else 0
-        avg_loss = df_trades[df_trades['pnl'] < 0]['pnl'].mean() if losing_trades > 0 else 0
-        
-        # Calculate max drawdown
+
+        total_profit = float(df_trades['pnl'].sum())
+        avg_win = float(df_trades[df_trades['pnl'] > 0]['pnl'].mean() or 0)
+        avg_loss = float(df_trades[df_trades['pnl'] < 0]['pnl'].mean() or 0)
+
         df_equity['peak'] = df_equity['equity'].cummax()
         df_equity['drawdown'] = (df_equity['equity'] - df_equity['peak']) / df_equity['peak'] * 100
-        max_drawdown = df_equity['drawdown'].min()
-        
-        # Profit factor
-        gross_profit = df_trades[df_trades['pnl'] > 0]['pnl'].sum() if winning_trades > 0 else 0
-        gross_loss = abs(df_trades[df_trades['pnl'] < 0]['pnl'].sum()) if losing_trades > 0 else 0
-        profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
-        
-        # ROI
+        max_drawdown = float(df_equity['drawdown'].min() or 0)
+
+        gross_profit = float(df_trades[df_trades['pnl'] > 0]['pnl'].sum() or 0)
+        gross_loss = abs(float(df_trades[df_trades['pnl'] < 0]['pnl'].sum() or 0))
+        profit_factor = float(gross_profit / gross_loss) if gross_loss > 0 else float('inf')
+
+        returns = df_trades['pnl'] / self.initial_balance
+        sharpe = float((returns.mean() / returns.std()) * np.sqrt(252)) if returns.std() > 0 else 0
+        negative = returns[returns < 0]
+        sortino = float((returns.mean() / negative.std()) * np.sqrt(252)) if len(negative) > 0 and negative.std() > 0 else 0
+
         roi = ((self.balance - self.initial_balance) / self.initial_balance) * 100
-        
+
+        trade_explorer = self._build_trade_explorer(df_trades)
+        monte_carlo = self._monte_carlo_analysis(df_trades['pnl'].tolist())
+
         return {
+            'segment': segment_name,
             'total_trades': total_trades,
             'winning_trades': winning_trades,
             'losing_trades': losing_trades,
@@ -433,11 +506,15 @@ class BacktestEngine:
             'avg_loss': avg_loss,
             'max_drawdown': max_drawdown,
             'profit_factor': profit_factor,
-            'roi': roi,
-            'final_balance': self.balance,
-            'initial_balance': self.initial_balance,
-            'trades': self.trades,
-            'equity_curve': self.equity_curve
+            'roi': float(roi),
+            'final_balance': float(self.balance),
+            'initial_balance': float(self.initial_balance),
+            'sharpe_ratio': sharpe,
+            'sortino_ratio': sortino,
+            'trades': list(self.trades),
+            'equity_curve': list(self.equity_curve),
+            'trade_explorer': trade_explorer,
+            'monte_carlo': monte_carlo
         }
     
     def get_status(self) -> Dict:
@@ -446,10 +523,100 @@ class BacktestEngine:
             "running": self.running,
             "has_results": self.results is not None
         }
-    
+
     def get_results(self) -> Dict:
         """Get backtest results"""
         if not self.results:
             raise Exception("No results available. Run backtest first.")
         return self.results
+
+    async def _notify(self, event_type: str, title: str, message: str, severity: str = 'info', metadata: Optional[Dict] = None):
+        if not self.notification_manager:
+            return
+        try:
+            await self.notification_manager.send_notification(event_type, title, message, severity, metadata)
+        except Exception as exc:
+            logger.debug(f"Notification skip: {exc}")
+
+    def _build_trade_explorer(self, df_trades: pd.DataFrame) -> Dict:
+        """Construct aggregated analytics for the trade explorer."""
+        explorer = {}
+        if df_trades.empty:
+            return explorer
+
+        df_trades['day'] = df_trades['entry_dt'].dt.date
+        day_perf = df_trades.groupby('day')['pnl'].sum().reset_index()
+        if not day_perf.empty:
+            best_day = day_perf.iloc[day_perf['pnl'].idxmax()].to_dict()
+            worst_day = day_perf.iloc[day_perf['pnl'].idxmin()].to_dict()
+            explorer['best_day'] = {'day': str(best_day['day']), 'pnl': float(best_day['pnl'])}
+            explorer['worst_day'] = {'day': str(worst_day['day']), 'pnl': float(worst_day['pnl'])}
+
+        long_short = df_trades.groupby('side')['pnl'].agg(['count', 'sum']).reset_index()
+        explorer['long_vs_short'] = [
+            {'side': row['side'], 'trades': int(row['count']), 'pnl': float(row['sum'])}
+            for _, row in long_short.iterrows()
+        ]
+
+        df_trades['week'] = df_trades['entry_dt'].dt.isocalendar().week
+        df_trades['month'] = df_trades['entry_dt'].dt.to_period('M').astype(str)
+
+        explorer['daily'] = [
+            {'day': str(row['day']), 'pnl': float(row['pnl'])}
+            for _, row in day_perf.iterrows()
+        ]
+        weekly = df_trades.groupby('week')['pnl'].sum().reset_index()
+        explorer['weekly'] = [
+            {'week': int(row['week']), 'pnl': float(row['pnl'])}
+            for _, row in weekly.iterrows()
+        ]
+        monthly = df_trades.groupby('month')['pnl'].sum().reset_index()
+        explorer['monthly'] = [
+            {'month': row['month'], 'pnl': float(row['pnl'])}
+            for _, row in monthly.iterrows()
+        ]
+
+        explorer['average_r'] = float((df_trades['pnl_pct'].mean() or 0) / 100)
+        return explorer
+
+    def _monte_carlo_analysis(self, pnl_series: List[float]) -> Dict:
+        """Run Monte Carlo simulations on the trade PnL series."""
+        if not pnl_series:
+            return {}
+
+        iterations = self.monte_carlo_iterations
+        ending_balances = []
+        drawdowns = []
+        ruin = 0
+        for _ in range(iterations):
+            equity = self.initial_balance
+            peak = equity
+            worst_dd = 0
+            for pnl in np.random.permutation(pnl_series):
+                equity += pnl
+                peak = max(peak, equity)
+                drawdown = (equity - peak) / peak if peak else 0
+                worst_dd = min(worst_dd, drawdown)
+            ending_balances.append(equity)
+            drawdowns.append(worst_dd)
+            if equity <= 0:
+                ruin += 1
+
+        ending = np.array(ending_balances)
+        drawdowns_arr = np.array(drawdowns)
+        return {
+            'final_balance_distribution': {
+                'min': float(ending.min()),
+                'max': float(ending.max()),
+                'p50': float(np.percentile(ending, 50)),
+                'p95': float(np.percentile(ending, 95)),
+            },
+            'drawdown_distribution': {
+                'min': float(drawdowns_arr.min()),
+                'max': float(drawdowns_arr.max()),
+                'p50': float(np.percentile(drawdowns_arr, 50)),
+            },
+            'risk_of_ruin': float(ruin / iterations),
+            'value_at_risk': float(self.initial_balance - np.percentile(ending, 5)),
+        }
 

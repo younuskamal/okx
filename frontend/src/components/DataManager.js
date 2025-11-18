@@ -1,12 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Paper,
   Typography,
   Box,
   Button,
   Grid,
-  Card,
-  CardContent,
   LinearProgress,
   Table,
   TableBody,
@@ -33,24 +31,24 @@ function DataManager() {
     days: 365
   });
 
-  useEffect(() => {
-    loadDatasets();
-  }, []);
-
-  useEffect(() => {
-    if (backtestUpdate?.type === 'data_download') {
-      setDataDownloadProgress(backtestUpdate);
-    }
-  }, [backtestUpdate, setDataDownloadProgress]);
-
-  const loadDatasets = async () => {
+  const loadDatasets = useCallback(async () => {
     try {
       const response = await getDatasets();
       setDatasets(response.data.datasets || []);
     } catch (error) {
       console.error('Error loading datasets:', error);
     }
-  };
+  }, [setDatasets]);
+
+  useEffect(() => {
+    loadDatasets();
+  }, [loadDatasets]);
+
+  useEffect(() => {
+    if (backtestUpdate?.type === 'data_download') {
+      setDataDownloadProgress(backtestUpdate);
+    }
+  }, [backtestUpdate, setDataDownloadProgress]);
 
   const handleDownload = async () => {
     setLoading(true);

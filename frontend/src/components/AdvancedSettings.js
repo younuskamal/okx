@@ -17,21 +17,64 @@ import {
   FormControl,
   InputLabel,
   Card,
-  CardContent,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails
+  CardContent
 } from '@mui/material';
 import {
   Save,
-  ExpandMore,
   Settings as SettingsIcon,
   Security,
   TrendingUp,
   Schedule,
-  Api
+  Api,
+  NotificationsActive,
+  Telegram,
+  Email,
+  Link as LinkIcon
 } from '@mui/icons-material';
-import { getSettings, updateCategorySettings, updateSingleSetting } from '../api';
+import { getSettings, updateCategorySettings } from '../api';
+
+const notificationDefaults = {
+  enabled: true,
+  channels: {
+    desktop: { enabled: true },
+    telegram: { enabled: false, bot_token: '', chat_id: '' },
+    email: {
+      enabled: false,
+      smtp_host: '',
+      smtp_port: 587,
+      username: '',
+      password: '',
+      from_address: '',
+      to_addresses: '',
+      use_tls: true
+    },
+    webhook: { enabled: false, url: '', headers: {} }
+  },
+  events: {
+    trade_opened: true,
+    trade_closed: true,
+    stop_loss: true,
+    take_profit: true,
+    error: true,
+    margin_issue: true,
+    api_disconnect: true,
+    backtest_completed: true,
+    system_event: true
+  }
+};
+
+const mergeNotificationSettings = (incoming = {}) => ({
+  ...notificationDefaults,
+  ...incoming,
+  channels: {
+    ...notificationDefaults.channels,
+    ...(incoming.channels || {})
+  },
+  events: {
+    ...notificationDefaults.events,
+    ...(incoming.events || {})
+  }
+});
 
 function AdvancedSettings() {
   const [settings, setSettings] = useState(null);
@@ -47,7 +90,11 @@ function AdvancedSettings() {
   const loadSettings = async () => {
     try {
       const response = await getSettings();
-      setSettings(response.data);
+      const payload = {
+        ...response.data,
+        notifications: mergeNotificationSettings(response.data?.notifications)
+      };
+      setSettings(payload);
     } catch (error) {
       console.error('Error loading settings:', error);
     }
@@ -105,13 +152,33 @@ function AdvancedSettings() {
     }
   };
 
-  const updateSingle = async (category, key, value) => {
-    try {
-      await updateSingleSetting(category, key, value);
-      updateSetting(category, key, value);
-    } catch (error) {
-      console.error('Error updating setting:', error);
-    }
+  const updateNotificationChannel = (channel, key, value) => {
+    setSettings(prev => ({
+      ...prev,
+      notifications: {
+        ...(prev.notifications || {}),
+        channels: {
+          ...(prev.notifications?.channels || {}),
+          [channel]: {
+            ...(prev.notifications?.channels?.[channel] || {}),
+            [key]: value
+          }
+        }
+      }
+    }));
+  };
+
+  const updateNotificationEvent = (eventKey, value) => {
+    setSettings(prev => ({
+      ...prev,
+      notifications: {
+        ...(prev.notifications || {}),
+        events: {
+          ...(prev.notifications?.events || {}),
+          [eventKey]: value
+        }
+      }
+    }));
   };
 
   if (!settings) {
@@ -153,6 +220,7 @@ function AdvancedSettings() {
         <Tab icon={<Security />} label="Risk Management" />
         <Tab icon={<Api />} label="API Keys" />
         <Tab icon={<SettingsIcon />} label="Advanced" />
+        <Tab icon={<NotificationsActive />} label="Notifications" />
       </Tabs>
 
       {/* Strategy Settings */}
@@ -545,6 +613,253 @@ function AdvancedSettings() {
               disabled={loading}
             >
               Save Advanced Settings
+            </Button>
+          </Box>
+        </Paper>
+      )}
+
+      {/* Notification Settings */}
+      {tab === 5 && (
+        <Paper sx={{ p: 3, bgcolor: 'background.paper' }}>
+          <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold', mb: 3 }}>
+            Notification Center
+          </Typography>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={settings.notifications?.enabled !== false}
+                onChange={(e) => updateSetting('notifications', 'enabled', e.target.checked)}
+              />
+            }
+            label="Enable all notifications"
+          />
+
+          <Grid container spacing={3} sx={{ mt: 1 }}>
+            <Grid item xs={12} md={6}>
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Telegram fontSize="small" /> Telegram Alerts
+                    </Typography>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={settings.notifications?.channels?.telegram?.enabled || false}
+                          onChange={(e) => updateNotificationChannel('telegram', 'enabled', e.target.checked)}
+                        />
+                      }
+                      label="Enabled"
+                    />
+                  </Box>
+                  <TextField
+                    fullWidth
+                    label="Bot Token"
+                    type="password"
+                    value={settings.notifications?.channels?.telegram?.bot_token || ''}
+                    onChange={(e) => updateNotificationChannel('telegram', 'bot_token', e.target.value)}
+                    sx={{ mb: 2 }}
+                  />
+                  <TextField
+                    fullWidth
+                    label="Chat ID"
+                    value={settings.notifications?.channels?.telegram?.chat_id || ''}
+                    onChange={(e) => updateNotificationChannel('telegram', 'chat_id', e.target.value)}
+                  />
+                </CardContent>
+              </Card>
+            </Grid>
+
+            <Grid item xs={12} md={6}>
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Email fontSize="small" /> Email Alerts
+                    </Typography>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={settings.notifications?.channels?.email?.enabled || false}
+                          onChange={(e) => updateNotificationChannel('email', 'enabled', e.target.checked)}
+                        />
+                      }
+                      label="Enabled"
+                    />
+                  </Box>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} md={6}>
+                      <TextField
+                        fullWidth
+                        label="SMTP Host"
+                        value={settings.notifications?.channels?.email?.smtp_host || ''}
+                        onChange={(e) => updateNotificationChannel('email', 'smtp_host', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                      <TextField
+                        fullWidth
+                        label="SMTP Port"
+                        type="number"
+                        value={settings.notifications?.channels?.email?.smtp_port || 587}
+                        onChange={(e) => updateNotificationChannel('email', 'smtp_port', parseInt(e.target.value) || 0)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                      <TextField
+                        fullWidth
+                        label="Username"
+                        value={settings.notifications?.channels?.email?.username || ''}
+                        onChange={(e) => updateNotificationChannel('email', 'username', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                      <TextField
+                        fullWidth
+                        label="Password"
+                        type="password"
+                        value={settings.notifications?.channels?.email?.password || ''}
+                        onChange={(e) => updateNotificationChannel('email', 'password', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                      <TextField
+                        fullWidth
+                        label="From Address"
+                        value={settings.notifications?.channels?.email?.from_address || ''}
+                        onChange={(e) => updateNotificationChannel('email', 'from_address', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                      <TextField
+                        fullWidth
+                        label="Recipients (comma separated)"
+                        value={settings.notifications?.channels?.email?.to_addresses || ''}
+                        onChange={(e) => updateNotificationChannel('email', 'to_addresses', e.target.value)}
+                      />
+                    </Grid>
+                    <Grid item xs={12}>
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={settings.notifications?.channels?.email?.use_tls !== false}
+                            onChange={(e) => updateNotificationChannel('email', 'use_tls', e.target.checked)}
+                          />
+                        }
+                        label="Use TLS"
+                      />
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+            </Grid>
+
+            <Grid item xs={12} md={6}>
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <NotificationsActive fontSize="small" /> Desktop / Browser
+                    </Typography>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={settings.notifications?.channels?.desktop?.enabled !== false}
+                          onChange={(e) => updateNotificationChannel('desktop', 'enabled', e.target.checked)}
+                        />
+                      }
+                      label="Enabled"
+                    />
+                  </Box>
+                  <Typography variant="body2" color="text.secondary">
+                    Desktop notifications appear directly in your browser for immediate visibility.
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+
+            <Grid item xs={12} md={6}>
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                    <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <LinkIcon fontSize="small" /> Webhook (Discord/Slack)
+                    </Typography>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={settings.notifications?.channels?.webhook?.enabled || false}
+                          onChange={(e) => updateNotificationChannel('webhook', 'enabled', e.target.checked)}
+                        />
+                      }
+                      label="Enabled"
+                    />
+                  </Box>
+                  <TextField
+                    fullWidth
+                    label="Webhook URL"
+                    value={settings.notifications?.channels?.webhook?.url || ''}
+                    onChange={(e) => updateNotificationChannel('webhook', 'url', e.target.value)}
+                  />
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+
+          <Divider sx={{ my: 3 }} />
+          <Typography variant="subtitle1" sx={{ fontWeight: 'bold', mb: 1 }}>
+            Events
+          </Typography>
+          <Grid container spacing={2}>
+            {[{
+              key: 'trade_opened',
+              label: 'Trade Opened'
+            }, {
+              key: 'trade_closed',
+              label: 'Trade Closed'
+            }, {
+              key: 'stop_loss',
+              label: 'Stop Loss Hit'
+            }, {
+              key: 'take_profit',
+              label: 'Take Profit Hit'
+            }, {
+              key: 'error',
+              label: 'Critical Errors'
+            }, {
+              key: 'margin_issue',
+              label: 'Margin / Balance Issues'
+            }, {
+              key: 'api_disconnect',
+              label: 'API Disconnect'
+            }, {
+              key: 'backtest_completed',
+              label: 'Backtest Completed'
+            }, {
+              key: 'system_event',
+              label: 'System Events'
+            }].map((event) => (
+              <Grid item xs={12} md={6} key={event.key}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={settings.notifications?.events?.[event.key] !== false}
+                      onChange={(e) => updateNotificationEvent(event.key, e.target.checked)}
+                    />
+                  }
+                  label={event.label}
+                />
+              </Grid>
+            ))}
+          </Grid>
+
+          <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
+            <Button
+              variant="outlined"
+              onClick={() => handleSaveCategory('notifications')}
+              disabled={loading}
+            >
+              Save Notification Settings
             </Button>
           </Box>
         </Paper>

@@ -4,8 +4,7 @@ import {
   Typography,
   Box,
   Chip,
-  Divider,
-  LinearProgress
+  Divider
 } from '@mui/material';
 import { CheckCircle, Error, Warning } from '@mui/icons-material';
 

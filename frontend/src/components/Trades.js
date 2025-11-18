@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Paper,
   Typography,
@@ -22,17 +22,7 @@ function Trades() {
   const [total, setTotal] = useState(0);
   const pageSize = 50;
 
-  useEffect(() => {
-    loadTrades();
-  }, [page]);
-
-  useEffect(() => {
-    if (wsTrades && wsTrades.length > 0) {
-      setTrades(prev => [wsTrades[0], ...prev]);
-    }
-  }, [wsTrades]);
-
-  const loadTrades = async () => {
+  const loadTrades = useCallback(async () => {
     try {
       const response = await getTrades(pageSize, (page - 1) * pageSize);
       setTrades(response.data.trades || []);
@@ -40,7 +30,17 @@ function Trades() {
     } catch (error) {
       console.error('Error loading trades:', error);
     }
-  };
+  }, [page, pageSize]);
+
+  useEffect(() => {
+    loadTrades();
+  }, [page, loadTrades]);
+
+  useEffect(() => {
+    if (wsTrades && wsTrades.length > 0) {
+      setTrades(prev => [wsTrades[0], ...prev]);
+    }
+  }, [wsTrades]);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '-';

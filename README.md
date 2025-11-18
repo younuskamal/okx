@@ -8,6 +8,9 @@ A full-featured, production-grade trading system for OKX exchange with engulfing
 
 **Windows:**
 ```bash
+# Launch everything with browser auto-open
+start.bat
+
 # Start backend only
 scripts\start_backend.bat
 
@@ -124,6 +127,8 @@ okx/
 - ✅ Take profit logic (close at first profit)
 - ✅ Trading window enforcement (15:00-19:00 UTC+3)
 - ✅ Automatic reconnection and error handling
+- ✅ Live account overview API (balance, wallets, mark price, funding, open orders)
+- ✅ Live market data streamer pushing candles, order book, and trades to the dashboard
 
 ### Backtesting Engine
 - ✅ Historical data fetching from OKX
@@ -132,6 +137,10 @@ okx/
   - Total trades, win rate, ROI
   - Max drawdown, profit factor
   - Equity curve visualization
+- ✅ Forward validation split with comparison analytics
+- ✅ Trade Explorer (best/worst days, long vs short, daily/weekly/monthly PnL)
+- ✅ Built-in Monte Carlo simulator (VaR, drawdown distribution, risk of ruin)
+- ✅ Parameter optimizer with grid-search ranges and sortable results
 - ✅ Configurable parameters
 - ✅ Real-time progress updates
 
@@ -149,6 +158,34 @@ okx/
 - ✅ Trade history and analytics
 - ✅ Live logs and metrics
 - ✅ Charts and visualizations
+- ✅ Notification center with browser alerts and channel health states
+- ✅ Dynamic drag-and-resize dashboard grid with persistent layouts
+- ✅ Dark/Light theme toggle
+- ✅ TradingView-style chart with MA overlay and trade markers powered by live data
+- ✅ Market Pulse widget (orderbook + tape)
+- ✅ Backtest Pro console with tabs for Forward Test, Explorer, Monte Carlo, and Optimizer
+
+### Notification System
+- ✅ Multi-channel delivery: Desktop/browser, Telegram, Email, and custom webhooks (Discord/Slack)
+- ✅ Granular event toggles (trade events, SL/TP, errors, margin issues, backtests, system events)
+- ✅ Secure credential management with instant backend sync
+- ✅ Built-in Notification Center card on the dashboard for quick insight
+- ✅ Optimizer/backtest completion alerts with metadata payloads
+
+## 📡 Live Market Data Controls
+
+- The dashboard streams live candles, order book levels, and trades from OKX via the new `MarketDataService`.
+- Use the **Symbol** and **Timeframe** selectors at the top of the dashboard to resubscribe instantly.
+- REST endpoints:
+  - `GET /api/data/market/snapshot` – latest cached snapshot for mobile or external tools.
+  - `POST /api/data/market/subscribe?symbol=ETH/USDT&timeframe=5m` – change feed programmatically.
+
+## 🧠 Backtest Pro & Optimizer
+
+- **Forward Test Tab**: compare training vs validation ROI/win-rate deltas.
+- **Trade Explorer Tab**: inspect best/worst days, long vs short stats, and Monte Carlo risk simulations.
+- **Optimizer Tab**: define parameter grids for strategy + risk settings and run exhaustive evaluations directly from the UI.
+- Backend endpoint: `POST /api/backtest/optimizer` returns the best/worst combinations along with Sharpe/ROI metrics.
 
 ## 🔧 Configuration
 
@@ -187,6 +224,14 @@ All settings can be configured from the **Settings** tab in the dashboard:
 - `min_profit_pips`: Min profit in pips (default: 0)
 - `min_profit_money`: Min profit in USD (default: 0)
 - `close_at_first_profit`: Close on first profit (default: true)
+
+**Notifications:**
+- `enabled`: Master switch for all outbound alerts
+- `channels.desktop.enabled`: Toggle in-browser notifications
+- `channels.telegram`: Bot token & chat ID for Telegram updates
+- `channels.email`: SMTP configuration (host, port, credentials, from/to, TLS)
+- `channels.webhook`: HTTPS endpoint for Discord/Slack/etc.
+- `events.*`: Fine-grained controls for trade lifecycle, risk events, API disconnects, system events, and backtest completion
 
 ## 📊 API Endpoints
 

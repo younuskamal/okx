@@ -82,3 +82,26 @@ async def get_trading_metrics():
         logger.error(f"Error getting metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/trading/account")
+async def get_account_overview(force: bool = False):
+    """Fetch balances, orders, positions, and mark price."""
+    if not trading_engine:
+        raise HTTPException(status_code=500, detail="Trading engine not initialized")
+    try:
+        snapshot = await trading_engine.get_account_snapshot(force_refresh=force)
+        return snapshot
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/trading/wallets")
+async def get_wallet_breakdown():
+    """Return wallet balances only."""
+    if not trading_engine:
+        raise HTTPException(status_code=500, detail="Trading engine not initialized")
+    try:
+        return await trading_engine.get_wallet_balances()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+

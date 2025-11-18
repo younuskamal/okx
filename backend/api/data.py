@@ -1,12 +1,12 @@
 """
-Data Management API Endpoints
-"""
+"""Data Management API Endpoints."""
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from typing import Optional
 import logging
 
 from backend.data_downloader import DataDownloader
 from backend.trading_engine import TradingEngine
+from backend.market_data_service import MarketDataService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -14,6 +14,7 @@ router = APIRouter()
 # Global data downloader instance
 data_downloader: Optional[DataDownloader] = None
 trading_engine: Optional[TradingEngine] = None
+market_data_service: Optional[MarketDataService] = None
 
 def set_data_downloader(downloader: DataDownloader):
     """Set global data downloader instance"""
@@ -24,6 +25,12 @@ def set_trading_engine(engine: TradingEngine):
     """Set trading engine for WebSocket access"""
     global trading_engine
     trading_engine = engine
+
+
+def set_market_data_service(service: MarketDataService):
+    """Attach the market data snapshot service"""
+    global market_data_service
+    market_data_service = service
 
 @router.get("/data/datasets")
 async def get_datasets():
@@ -85,5 +92,28 @@ async def get_ohlcv_data(
     except Exception as e:
         logger.error(f"Error getting OHLCV data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/data/market/snapshot")
+async def get_market_snapshot():
+    """Return the cached live market snapshot."""
+    if not market_data_service:
+        raise HTTPException(status_code=500, detail="Market data service not initialized")
+    return market_data_service.get_snapshot()
+
+
+@router.post("/data/market/subscribe")
+async def subscribe_market(symbol: str = "ETH/USDT", timeframe: str = "2m"):
+    """Update the market data subscription to a new symbol/timeframe."""
+    try:
+        if not market_data_service:
+            raise HTTPException(status_code=500, detail="Market data service not initialized")
+        await market_data_service.update_subscription(symbol, timeframe)
+        return {"status": "ok", "symbol": symbol, "timeframe": timeframe}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Error updating subscription: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 

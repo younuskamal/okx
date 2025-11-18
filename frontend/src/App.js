@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import {
   Container,
@@ -10,38 +10,45 @@ import {
   Tab,
   CssBaseline,
   ThemeProvider,
-  createTheme
+  createTheme,
+  IconButton
 } from '@mui/material';
+import { Brightness4, Brightness7 } from '@mui/icons-material';
 import Dashboard from './components/AdvancedDashboard';
 import Settings from './components/AdvancedSettings';
 import Backtest from './components/Backtest';
 import Trades from './components/Trades';
 import DataManager from './components/DataManager';
-import { useWebSocket } from './hooks/useWebSocket';
+import { WebSocketProvider, useWebSocket } from './hooks/useWebSocket';
 
-const darkTheme = createTheme({
-  palette: {
-    mode: 'dark',
-    primary: {
-      main: '#00d4ff',
-    },
-    secondary: {
-      main: '#ff6b6b',
-    },
-    background: {
-      default: '#0a0e27',
-      paper: '#1a1f3a',
-    },
-  },
-});
-
-function App() {
+function AppShell() {
   const [currentTab, setCurrentTab] = useState(0);
-  const { connected, logs } = useWebSocket();
+  const [mode, setMode] = useState('dark');
+  const { connected } = useWebSocket();
+  const theme = useMemo(() => createTheme({
+    palette: {
+      mode,
+      primary: { main: '#00d4ff' },
+      secondary: { main: '#ff6b6b' },
+      background: {
+        default: mode === 'dark' ? '#0a0e27' : '#f5f6fa',
+        paper: mode === 'dark' ? '#1a1f3a' : '#ffffff',
+      },
+    },
+    typography: {
+      fontFamily: 'Inter, Roboto, sans-serif'
+    }
+  }), [mode]);
 
   const handleTabChange = (event, newValue) => {
     setCurrentTab(newValue);
   };
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
 
   // Update tab based on route
   React.useEffect(() => {
@@ -53,8 +60,10 @@ function App() {
     else if (path === '/trades') setCurrentTab(4);
   }, []);
 
+  const toggleMode = () => setMode(prev => (prev === 'dark' ? 'light' : 'dark'));
+
   return (
-    <ThemeProvider theme={darkTheme}>
+    <ThemeProvider theme={theme}>
       <CssBaseline />
       <Router>
         <Box sx={{ flexGrow: 1 }}>
@@ -63,9 +72,9 @@ function App() {
               <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
                 OKX Trading System
               </Typography>
-              <Box sx={{ 
-                display: 'flex', 
-                alignItems: 'center', 
+              <Box sx={{
+                display: 'flex',
+                alignItems: 'center',
                 gap: 2,
                 mr: 2
               }}>
@@ -86,6 +95,9 @@ function App() {
                 <Typography variant="body2">
                   {connected ? 'Connected' : 'Disconnected'}
                 </Typography>
+                <IconButton color="inherit" onClick={toggleMode}>
+                  {mode === 'dark' ? <Brightness7 /> : <Brightness4 />}
+                </IconButton>
               </Box>
             </Toolbar>
             <Tabs
@@ -113,6 +125,14 @@ function App() {
         </Box>
       </Router>
     </ThemeProvider>
+  );
+}
+
+function App() {
+  return (
+    <WebSocketProvider>
+      <AppShell />
+    </WebSocketProvider>
   );
 }
 

@@ -14,6 +14,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared.strategy import EngulfingStrategy
 from backend.websocket_manager import WebSocketManager
+from backend.notification_manager import NotificationManager
 from backend.database import save_trade, save_position, update_position, get_positions
 
 logger = logging.getLogger(__name__)
@@ -21,15 +22,19 @@ logger = logging.getLogger(__name__)
 class TradingEngine:
     """Enhanced trading engine with async support"""
     
-    def __init__(self, settings: Dict, ws_manager: WebSocketManager):
+    def __init__(self, settings: Dict, ws_manager: WebSocketManager, notification_manager: Optional[NotificationManager] = None):
         self.settings = settings
         self.ws_manager = ws_manager
+        self.notification_manager = notification_manager
         self.exchange: Optional[ccxt.okx] = None
         self.strategy = EngulfingStrategy()
         self.current_position: Optional[Dict] = None
         self.running = False
         self.task: Optional[asyncio.Task] = None
         self.candles_cache: List[List[float]] = []
+        self.api_keys = self.settings.get('api_keys', {})
+        self._account_cache: Dict[str, Dict] = {}
+        self._account_cache_ttl = 15
         self.metrics = {
             "total_trades": 0,
             "winning_trades": 0,
@@ -41,6 +46,7 @@ class TradingEngine:
     def _init_exchange(self, api_keys: Dict):
         """Initialize OKX exchange connection"""
         try:
+            self.api_keys = api_keys
             self.exchange = ccxt.okx({
                 'apiKey': api_keys.get('okx_api_key', ''),
                 'secret': api_keys.get('okx_secret_key', ''),
@@ -111,6 +117,12 @@ class TradingEngine:
                 "message": f"Error fetching candles: {e}",
                 "timestamp": datetime.now().isoformat()
             })
+            await self._notify(
+                'api_disconnect',
+                'Failed to fetch candles',
+                str(e),
+                severity='warning'
+            )
             return []
     
     def calculate_stop_loss(self, signal_type: str, engulfing_candle: List[float]) -> float:
@@ -186,6 +198,7 @@ class TradingEngine:
                 "message": f"Error placing order: {e}",
                 "timestamp": datetime.now().isoformat()
             })
+            await self._notify('error', 'Order placement failed', str(e), severity='error')
             return None
     
     async def close_position(self, position: Dict, reason: str = "exit") -> bool:
@@ -235,9 +248,21 @@ class TradingEngine:
                 
                 await self.ws_manager.send_trade_update(trade)
                 await self.ws_manager.send_metrics_update(self.metrics)
-                
+
                 logger.info(f"Closed position. Profit: ${profit:.2f}")
                 self.current_position = None
+                event_type = 'trade_closed'
+                if reason == 'stop_loss':
+                    event_type = 'stop_loss'
+                elif reason == 'take_profit':
+                    event_type = 'take_profit'
+                await self._notify(
+                    event_type,
+                    f"Trade closed ({reason})",
+                    f"PnL: ${profit:.2f}",
+                    severity='success' if profit > 0 else 'warning',
+                    metadata=trade
+                )
                 return True
             return False
         except Exception as e:
@@ -268,6 +293,12 @@ class TradingEngine:
             
             if usdt_balance < 10:
                 logger.warning(f"Insufficient balance: ${usdt_balance:.2f}")
+                await self._notify(
+                    'margin_issue',
+                    'Insufficient balance',
+                    f"Available USDT: {usdt_balance:.2f}",
+                    severity='warning'
+                )
                 return False
             
             # Calculate position size
@@ -302,8 +333,14 @@ class TradingEngine:
             
             save_position(self.current_position)
             await self.ws_manager.send_position_update(self.current_position)
-            
+
             logger.info(f"Opened {side} position at ${current_price:.2f}, SL: ${stop_loss:.2f}")
+            await self._notify(
+                'trade_opened',
+                f"{side.title()} position opened",
+                f"Entry: ${current_price:.2f} | Size: {quantity:.4f}",
+                metadata=self.current_position
+            )
             return True
             
         except Exception as e:
@@ -400,16 +437,20 @@ class TradingEngine:
                 
             except Exception as e:
                 logger.error(f"Error in trading loop: {e}")
+                await self._notify('error', 'Trading loop error', str(e), severity='error')
                 await asyncio.sleep(10)
     
     async def start(self, settings: Dict = None):
         """Start trading engine"""
         if settings:
             self.settings = settings
-        
+            if self.notification_manager:
+                self.notification_manager.update_from_settings(settings.get('notifications', {}))
+
         # Initialize exchange
         api_keys = self.settings.get('api_keys', {})
         if not self._init_exchange(api_keys):
+            await self._notify('api_disconnect', 'Failed to initialize OKX', 'Please verify API credentials', severity='error')
             raise Exception("Failed to initialize exchange")
         
         # Update strategy config
@@ -423,7 +464,8 @@ class TradingEngine:
         self.running = True
         self.task = asyncio.create_task(self.trading_loop())
         logger.info("Trading engine started")
-    
+        await self._notify('system_event', 'Trading engine started', 'Live trading loop is running', severity='success')
+
     async def stop(self):
         """Stop trading engine"""
         self.running = False
@@ -434,6 +476,7 @@ class TradingEngine:
             except asyncio.CancelledError:
                 pass
         logger.info("Trading engine stopped")
+        await self._notify('system_event', 'Trading engine stopped', 'Trading loop halted', severity='info')
     
     async def reload_settings(self, settings: Dict):
         """Reload settings and restart if needed"""
@@ -443,15 +486,18 @@ class TradingEngine:
         
         self.settings = settings
         self._update_strategy_config()
-        
+
         # Reinitialize exchange if API keys changed
         api_keys = settings.get('api_keys', {})
         if api_keys:
             self._init_exchange(api_keys)
-        
+
+        if self.notification_manager:
+            self.notification_manager.update_from_settings(settings.get('notifications', {}))
+
         if was_running:
             await self.start(settings)
-        
+
         logger.info("Settings reloaded and applied")
     
     def is_running(self) -> bool:
@@ -470,4 +516,68 @@ class TradingEngine:
     def get_metrics(self) -> Dict:
         """Get trading metrics"""
         return self.metrics
+
+    async def get_account_snapshot(self, force_refresh: bool = False) -> Dict:
+        """Return cached account overview with balances/orders/positions."""
+        if not self.exchange:
+            api_keys = self.settings.get('api_keys', {})
+            self._init_exchange(api_keys)
+
+        cache_entry = self._account_cache.get('snapshot')
+        if cache_entry and not force_refresh:
+            if (datetime.now() - cache_entry['timestamp']).seconds < self._account_cache_ttl:
+                return cache_entry['data']
+
+        loop = asyncio.get_event_loop()
+        try:
+            balance = await loop.run_in_executor(None, self.exchange.fetch_balance)
+            symbol = self.settings.get('strategy', {}).get('symbol', 'ETH/USDT')
+            open_orders = await loop.run_in_executor(None, lambda: self.exchange.fetch_open_orders(symbol))
+            positions = []
+            if getattr(self.exchange, 'has', {}).get('fetchPositions'):
+                positions = await loop.run_in_executor(None, self.exchange.fetch_positions)
+            funding = None
+            if getattr(self.exchange, 'has', {}).get('fetchFundingRate'):
+                try:
+                    funding = await loop.run_in_executor(None, lambda: self.exchange.fetchFundingRate(symbol))
+                except Exception:
+                    funding = None
+            mark_price = None
+            if getattr(self.exchange, 'has', {}).get('fetchTicker'):
+                ticker = await loop.run_in_executor(None, lambda: self.exchange.fetch_ticker(symbol))
+                mark_price = ticker.get('last') if ticker else None
+
+            snapshot = {
+                'portfolio_value': balance.get('total', {}).get('USDT') or balance.get('info'),
+                'wallets': balance.get('info', {}).get('data') if isinstance(balance.get('info'), dict) else balance.get('total'),
+                'open_orders': open_orders,
+                'positions': positions,
+                'funding_rate': funding.get('fundingRate') if funding else None,
+                'mark_price': mark_price,
+                'account_type': 'demo' if self.api_keys.get('okx_sandbox', True) else 'live',
+                'timestamp': datetime.now().isoformat(),
+            }
+
+            self._account_cache['snapshot'] = {'data': snapshot, 'timestamp': datetime.now()}
+            return snapshot
+        except Exception as exc:
+            logger.error(f"Account snapshot failed: {exc}")
+            raise
+
+    async def get_wallet_balances(self) -> Dict:
+        """Convenience endpoint for wallet balance summary."""
+        snapshot = await self.get_account_snapshot()
+        wallets = snapshot.get('wallets') or {}
+        if isinstance(wallets, dict) and 'total' in wallets:
+            return wallets['total']
+        return wallets
+
+    async def _notify(self, event_type: str, title: str, message: str, severity: str = 'info', metadata: Optional[Dict] = None):
+        """Helper to send notifications safely"""
+        if not self.notification_manager:
+            return
+        try:
+            await self.notification_manager.send_notification(event_type, title, message, severity, metadata)
+        except Exception as exc:
+            logger.debug(f"Notification dispatch skipped: {exc}")
 
