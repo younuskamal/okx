@@ -76,6 +76,44 @@ class ConfigManager:
                 "default_initial_balance": 10000.0,
                 "default_days": 365,
                 "use_cached_data": True
+            },
+            "notifications": {
+                "enabled": True,
+                "channels": {
+                    "desktop": {"enabled": True},
+                    "telegram": {
+                        "enabled": False,
+                        "bot_token": "",
+                        "chat_id": ""
+                    },
+                    "email": {
+                        "enabled": False,
+                        "smtp_host": "",
+                        "smtp_port": 587,
+                        "username": "",
+                        "password": "",
+                        "from_address": "",
+                        "to_addresses": "",
+                        "use_tls": True
+                    },
+                    "webhook": {
+                        "enabled": False,
+                        "url": "",
+                        "headers": {}
+                    }
+                },
+                "events": {
+                    "trade_opened": True,
+                    "trade_closed": True,
+                    "stop_loss": True,
+                    "take_profit": True,
+                    "error": True,
+                    "api_disconnect": True,
+                    "margin_issue": True,
+                    "system_event": True,
+                    "backtest_completed": True,
+                    "optimizer_completed": True
+                }
             }
         }
     

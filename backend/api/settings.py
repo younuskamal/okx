@@ -3,21 +3,31 @@ Settings API Endpoints
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, TYPE_CHECKING
 import logging
 
 from backend.settings_manager import SettingsManager
+
+if TYPE_CHECKING:
+    from backend.notification_manager import NotificationManager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Global settings manager
 settings_manager: Optional[SettingsManager] = None
+notification_manager: Optional["NotificationManager"] = None
 
 def set_settings_manager(manager: SettingsManager):
     """Set global settings manager"""
     global settings_manager
     settings_manager = manager
+
+
+def set_notification_manager(manager: "NotificationManager"):
+    """Attach notification manager for runtime refreshes"""
+    global notification_manager
+    notification_manager = manager
 
 class SettingUpdate(BaseModel):
     """Single setting update"""
@@ -59,6 +69,11 @@ async def update_category_settings(update: CategoryUpdate):
         if not settings_manager:
             raise HTTPException(status_code=500, detail="Settings manager not initialized")
         settings_manager.update_category(update.category, update.settings)
+
+        if update.category == 'notifications' and notification_manager:
+            notification_manager.update_from_settings(
+                settings_manager.get_category('notifications')
+            )
         
         # Reload trading engine if running
         # Import here to avoid circular dependency
@@ -85,6 +100,11 @@ async def update_single_setting(update: SettingUpdate):
         if not settings_manager:
             raise HTTPException(status_code=500, detail="Settings manager not initialized")
         settings_manager.update_setting(update.category, update.key, update.value)
+
+        if update.category == 'notifications' and notification_manager:
+            notification_manager.update_from_settings(
+                settings_manager.get_category('notifications')
+            )
         
         # Reload trading engine if running
         try:

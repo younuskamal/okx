@@ -8,6 +8,9 @@ A full-featured, production-grade trading system for OKX exchange with engulfing
 
 **Windows:**
 ```bash
+# Launch everything with browser auto-open
+start.bat
+
 # Start backend only
 scripts\start_backend.bat
 
@@ -149,6 +152,13 @@ okx/
 - ✅ Trade history and analytics
 - ✅ Live logs and metrics
 - ✅ Charts and visualizations
+- ✅ Notification center with browser alerts and channel health states
+
+### Notification System
+- ✅ Multi-channel delivery: Desktop/browser, Telegram, Email, and custom webhooks (Discord/Slack)
+- ✅ Granular event toggles (trade events, SL/TP, errors, margin issues, backtests, system events)
+- ✅ Secure credential management with instant backend sync
+- ✅ Built-in Notification Center card on the dashboard for quick insight
 
 ## 🔧 Configuration
 
@@ -187,6 +197,14 @@ All settings can be configured from the **Settings** tab in the dashboard:
 - `min_profit_pips`: Min profit in pips (default: 0)
 - `min_profit_money`: Min profit in USD (default: 0)
 - `close_at_first_profit`: Close on first profit (default: true)
+
+**Notifications:**
+- `enabled`: Master switch for all outbound alerts
+- `channels.desktop.enabled`: Toggle in-browser notifications
+- `channels.telegram`: Bot token & chat ID for Telegram updates
+- `channels.email`: SMTP configuration (host, port, credentials, from/to, TLS)
+- `channels.webhook`: HTTPS endpoint for Discord/Slack/etc.
+- `events.*`: Fine-grained controls for trade lifecycle, risk events, API disconnects, system events, and backtest completion
 
 ## 📊 API Endpoints
 
